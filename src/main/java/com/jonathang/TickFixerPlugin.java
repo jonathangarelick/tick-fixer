@@ -74,7 +74,6 @@ public class TickFixerPlugin extends Plugin {
 
             try {
                 isGatewayReachable.set(address.isReachable(150));
-                log.info("Tick at " + System.currentTimeMillis());
 
                 if (isGatewayReachable.get())
                     failureCount.set(0);
