@@ -27,6 +27,7 @@ public class TickFixerPlugin extends Plugin {
 
     private final AtomicInteger failureCount = new AtomicInteger(0);
     private ScheduledExecutorService exec;
+    private InetAddress lastKnownAddress = null;
 
     @Override
     protected void startUp() throws Exception {
@@ -37,19 +38,18 @@ public class TickFixerPlugin extends Plugin {
             return;
         }
 
-        InetAddress address = getDefaultGatewayAddress();
-        if (address == null) return;
+        lastKnownAddress = getDefaultGatewayAddress();
+        if (lastKnownAddress == null) return;
 
-        log.debug("Default gateway is " + address);
+        log.debug("Default gateway is " + lastKnownAddress);
         exec = Executors.newSingleThreadScheduledExecutor();
         exec.scheduleAtFixedRate(this::pingGateway, 0, PING_INTERVAL, TimeUnit.MILLISECONDS);
     }
 
     private InetAddress getDefaultGatewayAddress() throws IOException {
-        log.debug("Getting default gateway address.");
         try (BufferedReader input = new BufferedReader(new InputStreamReader(Runtime.getRuntime().exec(CMD).getInputStream()))) {
             final InetAddress address = InetAddress.getByName(input.readLine());
-
+            log.debug("Default gateway address: " + address);
             if (address.isLoopbackAddress()) {
                 log.error("Default gateway not found. Terminating.");
                 return null;
@@ -61,14 +61,25 @@ public class TickFixerPlugin extends Plugin {
 
     private void pingGateway() {
         if (failureCount.get() >= MAX_FAILURES) {
-            log.error("Failed to ping default gateway 10 times. Terminating.");
-            exec.shutdown();
-            return;
+            try {
+                InetAddress newAddress = getDefaultGatewayAddress();
+                if (!newAddress.equals(lastKnownAddress)) {
+                    log.debug("Gateway address changed. Resetting failure count.");
+                    failureCount.set(0);
+                    lastKnownAddress = newAddress;
+                } else {
+                    log.error("Failed to ping default gateway 10 times with no address change. Terminating.");
+                    exec.shutdown();
+                    return;
+                }
+            } catch (IOException e) {
+                log.error("Error checking gateway address after max failures: " + e.getMessage());
+                exec.shutdown();
+                return;
+            }
         }
-
         try {
-            InetAddress address = getDefaultGatewayAddress();
-            boolean isReachable = address != null && address.isReachable(150);
+            boolean isReachable = lastKnownAddress.isReachable(150);
             if (isReachable) {
                 failureCount.set(0);
             } else {
