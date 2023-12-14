@@ -27,7 +27,7 @@ public class TickFixerPlugin extends Plugin {
 
     private final AtomicInteger failureCount = new AtomicInteger(0);
     private ScheduledExecutorService exec;
-    private InetAddress lastKnownAddress = null;
+    private InetAddress gatewayAddress = null;
 
     @Override
     protected void startUp() throws Exception {
@@ -38,10 +38,9 @@ public class TickFixerPlugin extends Plugin {
             return;
         }
 
-        lastKnownAddress = getDefaultGatewayAddress();
-        if (lastKnownAddress == null) return;
+        gatewayAddress = getDefaultGatewayAddress();
+        if (gatewayAddress == null) return;
 
-        log.debug("Default gateway is " + lastKnownAddress);
         exec = Executors.newSingleThreadScheduledExecutor();
         exec.scheduleAtFixedRate(this::pingGateway, 0, PING_INTERVAL, TimeUnit.MILLISECONDS);
     }
@@ -61,25 +60,12 @@ public class TickFixerPlugin extends Plugin {
 
     private void pingGateway() {
         if (failureCount.get() >= MAX_FAILURES) {
-            try {
-                InetAddress newAddress = getDefaultGatewayAddress();
-                if (!newAddress.equals(lastKnownAddress)) {
-                    log.debug("Gateway address changed. Resetting failure count.");
-                    failureCount.set(0);
-                    lastKnownAddress = newAddress;
-                } else {
-                    log.error("Failed to ping default gateway 10 times with no address change. Terminating.");
-                    exec.shutdown();
-                    return;
-                }
-            } catch (IOException e) {
-                log.error("Error checking gateway address after max failures: " + e.getMessage());
-                exec.shutdown();
-                return;
-            }
+            log.error("Failed to ping default gateway " + MAX_FAILURES + " times. Terminating.");
+            exec.shutdown();
+            return;
         }
         try {
-            boolean isReachable = lastKnownAddress.isReachable(150);
+            boolean isReachable = gatewayAddress.isReachable(150);
             if (isReachable) {
                 failureCount.set(0);
             } else {
