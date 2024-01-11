@@ -9,6 +9,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -17,20 +18,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Slf4j
 @PluginDescriptor(name = "Tick Fixer for Mac")
 public class TickFixerPlugin extends Plugin {
-    private static final String[] CMD = {
-            "/bin/zsh",
-            "-c",
-            "netstat -nr | awk '/default/ {print $2}' | head -n1"
-    };
     private static final int MAX_FAILURES = 10;
     private static final int PING_INTERVAL = 200; // in milliseconds
 
     private final AtomicInteger failureCount = new AtomicInteger(0);
-    private ScheduledExecutorService exec;
-    private InetAddress gatewayAddress = null;
+
+    private ScheduledExecutorService scheduler;
 
     @Override
-    protected void startUp() throws Exception {
+    protected void startUp() {
         log.info("Tick Fixer for Mac started.");
 
         if (OSType.getOSType() != OSType.MacOS) {
@@ -38,49 +34,82 @@ public class TickFixerPlugin extends Plugin {
             return;
         }
 
-        gatewayAddress = getDefaultGatewayAddress();
-        if (gatewayAddress == null) return;
+        scheduler = Executors.newSingleThreadScheduledExecutor();
 
-        exec = Executors.newSingleThreadScheduledExecutor();
-        exec.scheduleAtFixedRate(this::pingGateway, 0, PING_INTERVAL, TimeUnit.MILLISECONDS);
-    }
-
-    private InetAddress getDefaultGatewayAddress() throws IOException {
-        try (BufferedReader input = new BufferedReader(new InputStreamReader(Runtime.getRuntime().exec(CMD).getInputStream()))) {
-            final InetAddress address = InetAddress.getByName(input.readLine());
-            log.debug("Default gateway address: " + address);
-            if (address.isLoopbackAddress()) {
-                log.error("Default gateway not found. Terminating.");
-                return null;
-            }
-
-            return address;
+        try {
+            final InetAddress gatewayAddress = getDefaultGatewayAddress();
+            scheduler.scheduleAtFixedRate(() -> pingGateway(gatewayAddress), 0, PING_INTERVAL, TimeUnit.MILLISECONDS);
+        } catch (IOException e) {
+            log.error("A fatal error has occurred.", e);
         }
     }
 
-    private void pingGateway() {
+    /**
+     * Retrieves the default gateway address of the system.
+     *
+     * <p>This method executes a shell command to fetch the default gateway address and returns it as an {@link InetAddress}.
+     * The shell command is specifically designed for macOS systems with /bin/zsh and netstat installed, and might not work correctly on other systems.
+     *
+     * @return An {@link InetAddress} representing the default gateway address.
+     * @throws IOException if an I/O error occurs when executing the shell command,
+     *                     if the command output is empty or not in the expected format,
+     *                     or if the default gateway address is a loopback address.
+     */
+    private InetAddress getDefaultGatewayAddress() throws IOException {
+        Process process = Runtime.getRuntime().exec(new String[]{
+                "/bin/zsh",
+                "-c",
+                "netstat -nr | awk '/default/ {print $2}' | head -n1"
+        });
+        try (BufferedReader input = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+            String line = input.readLine();
+            if (line == null) {
+                throw new IOException("The command output is empty.");
+            }
+            InetAddress address = InetAddress.getByName(line);
+            if (address.isLoopbackAddress()) {
+                throw new IOException("The default gateway address is a loopback address.");
+            }
+            return address;
+        } catch (UnknownHostException e) {
+            throw new IOException("The host is unknown.", e);
+        }
+    }
+
+    /**
+     * Pings the default gateway and updates the failure count.
+     *
+     * <p>This method attempts to ping the default gateway. If the gateway is reachable, it resets the failure count to 0.
+     * If the gateway is not reachable or if an I/O error occurs, it increments the failure count.
+     *
+     * <p>If the failure count reaches a maximum limit (MAX_FAILURES), it logs an error message and shuts down the scheduler.
+     *
+     * @param address the InetAddress representing the default gateway to be pinged.
+     */
+    private void pingGateway(final InetAddress address) {
         if (failureCount.get() >= MAX_FAILURES) {
-            log.error("Failed to ping default gateway " + MAX_FAILURES + " times. Terminating.");
-            exec.shutdown();
+            log.error("Failed to ping default gateway {} times. Terminating.", MAX_FAILURES);
+            scheduler.shutdown();
             return;
         }
+
         try {
-            boolean isReachable = gatewayAddress.isReachable(150);
+            boolean isReachable = address.isReachable(150);
             if (isReachable) {
                 failureCount.set(0);
             } else {
                 failureCount.getAndIncrement();
             }
         } catch (IOException e) {
-            log.error("Error pinging gateway: " + e.getMessage());
+            log.error("Error pinging gateway.", e);
             failureCount.getAndIncrement();
         }
     }
 
     @Override
-    protected void shutDown() throws Exception {
-        if (exec != null && !exec.isShutdown()) {
-            exec.shutdown();
+    protected void shutDown() {
+        if (scheduler != null) {
+            scheduler.shutdown();
         }
         log.info("Tick Fixer for Mac stopped.");
     }
