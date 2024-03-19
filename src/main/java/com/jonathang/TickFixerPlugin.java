@@ -10,6 +10,8 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.UnknownHostException;
 import java.util.Properties;
 import java.util.concurrent.Executors;
@@ -22,6 +24,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class TickFixerPlugin extends Plugin {
     private static final int MAX_FAILURES = 10;
     private static final int PING_INTERVAL = 200; // in milliseconds
+    private static final int GATEWAY_PORT = 80;
+    private static final int GATEWAY_TIMEOUT = 150;
 
     private final AtomicInteger failureCount = new AtomicInteger(0);
 
@@ -104,6 +108,22 @@ public class TickFixerPlugin extends Plugin {
     }
 
     /**
+     * Attempts to check if a gateway is reachable by establishing a TCP connection.
+     *
+     * @param address the InetAddress representing the gateway to check
+     * @return true if a TCP connection can be established, false otherwise.
+     */
+    public boolean isGatewayReachable(InetAddress address) {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress(address, GATEWAY_PORT), GATEWAY_TIMEOUT);
+            return true;
+        } catch (IOException e) {
+            log.error("Error pinging gateway.", e);
+            return false;
+        }
+    }
+
+    /**
      * Pings the default gateway and updates the failure count.
      *
      * <p>This method attempts to ping the default gateway. If the gateway is reachable, it resets the failure count to 0.
@@ -120,15 +140,9 @@ public class TickFixerPlugin extends Plugin {
             return;
         }
 
-        try {
-            boolean isReachable = address.isReachable(150);
-            if (isReachable) {
-                failureCount.set(0);
-            } else {
-                failureCount.getAndIncrement();
-            }
-        } catch (IOException e) {
-            log.error("Error pinging gateway.", e);
+        if (isGatewayReachable(address)) {
+            failureCount.set(0);
+        } else {
             failureCount.getAndIncrement();
         }
     }
@@ -138,6 +152,6 @@ public class TickFixerPlugin extends Plugin {
         if (scheduler != null) {
             scheduler.shutdown();
         }
-        log.info("Tick Fixer for Mac stopped.");
+        log.info("Tick Fixer stopped");
     }
 }
