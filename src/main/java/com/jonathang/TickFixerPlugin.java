@@ -41,6 +41,7 @@ public class TickFixerPlugin extends Plugin {
 
         try {
             final InetAddress gatewayAddress = getDefaultGatewayAddress();
+            log.debug("Default gateway is {}", gatewayAddress.getHostAddress());
             scheduler.scheduleAtFixedRate(() -> pingGateway(gatewayAddress), 0, PING_INTERVAL, TimeUnit.MILLISECONDS);
         } catch (IOException e) {
             log.error("A fatal error has occurred.", e);
