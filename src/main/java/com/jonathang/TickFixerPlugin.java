@@ -7,9 +7,11 @@ import net.runelite.client.util.OSType;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.util.Properties;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -27,7 +29,8 @@ public class TickFixerPlugin extends Plugin {
 
     @Override
     protected void startUp() {
-        log.info("Tick Fixer for Mac started.");
+        String version = getVersionFromResource();
+        log.info("Tick Fixer {} started", version != null ? version : "(version unknown)");
 
         if (OSType.getOSType() != OSType.MacOS) {
             log.error("Operating system is not Mac. Terminating.");
@@ -42,6 +45,29 @@ public class TickFixerPlugin extends Plugin {
         } catch (IOException e) {
             log.error("A fatal error has occurred.", e);
         }
+    }
+
+    /**
+     * Attempts to retrieve the plugin version from a "version.txt" resource file.
+     *
+     * @return the version string if found, or null if the resource is not found or an error occurs
+     */
+    public static String getVersionFromResource() {
+        String version = null;
+
+        try (InputStream stream = TickFixerPlugin.class.getResourceAsStream("/version.txt")) {
+            if (stream != null) {
+                Properties properties = new Properties();
+                properties.load(stream);
+                version = properties.getProperty("version");
+            } else {
+                log.error("Warning: Version resource (version.txt) not found.");
+            }
+        } catch (IOException e) {
+            log.error("Error reading version resource: " + e.getMessage());
+        }
+
+        return version;
     }
 
     /**
