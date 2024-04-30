@@ -22,10 +22,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 @Slf4j
 @PluginDescriptor(name = "Tick Fixer for Mac")
 public class TickFixerPlugin extends Plugin {
-    private static final int MAX_FAILURES = 50;
-    private static final int PING_INTERVAL = 400; // in milliseconds
+    private static final int MAX_FAILURES = 100;
+    private static final int PING_INTERVAL = 200; // in milliseconds
     private static final int GATEWAY_PORT = 80;
-    private static final int GATEWAY_TIMEOUT = 150;
+    private static final int GATEWAY_TIMEOUT = 300;
 
     private final AtomicInteger failureCount = new AtomicInteger(0);
 
