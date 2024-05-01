@@ -24,23 +24,9 @@ dependencies {
 }
 
 group = 'com.jonathang'
-version = '1.0.2'
+version = '1.0.3'
 
 tasks.withType(JavaCompile) {
 	options.encoding = 'UTF-8'
 	options.release.set(11)
-}
-
-// Saves the version number to a resource. This is used later for logging.
-// See also: Geheur's Bank Tag Layouts plugin
-task createVersionResource(dependsOn: processResources) {
-	doLast {
-		File versionFile = new File("$buildDir/resources/main/version.txt")
-		versionFile.parentFile.mkdirs()
-		versionFile.text = "version=$project.version"
-	}
-}
-
-classes {
-	dependsOn createVersionResource
 }
