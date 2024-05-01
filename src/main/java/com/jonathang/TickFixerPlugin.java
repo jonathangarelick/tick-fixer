@@ -22,7 +22,7 @@ public class TickFixerPlugin extends Plugin {
 
     @Override
     protected void startUp() {
-        log.info("Tick Fixer v1.0.3 started");
+        log.info("Tick Fixer v1.0.3 started"); // Remember to update build.gradle when changing version
 
         if (OSType.getOSType() != OSType.MacOS) {
             log.error("Operating system is not Mac. Terminating.");
