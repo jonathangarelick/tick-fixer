@@ -134,6 +134,7 @@ public class TickFixerPlugin extends Plugin {
         }
     }
 
+    // This uses inlined Apache Commons Validator v1.7
     private String getTargetAddress() {
         if (InetAddressValidator.getInstance().isValidInet4Address(targetAddress)) {
             return targetAddress;
