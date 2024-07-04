@@ -3,6 +3,8 @@ package com.jonathang;
 import com.google.inject.Inject;
 import com.google.inject.Provides;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.GameState;
+import net.runelite.api.events.GameStateChanged;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
@@ -38,6 +40,7 @@ public class TickFixerPlugin extends Plugin {
     private String targetAddress;
 
     // Failure management
+    private boolean isLoggedIn = false;
     private Instant lastSuccessfulPing;
 
     // Thread management
@@ -55,6 +58,11 @@ public class TickFixerPlugin extends Plugin {
         }
     }
 
+    @Subscribe
+    public void onGameStateChanged(GameStateChanged gameStateChanged) {
+        isLoggedIn = gameStateChanged.getGameState() == GameState.LOGGED_IN;
+    }
+
     private void updateConfig() {
         targetAddress = config.ipAddress();
         pingInterval = config.pingInterval();
@@ -68,7 +76,7 @@ public class TickFixerPlugin extends Plugin {
 
     @Override
     protected void startUp() {
-        log.info("Tick Fixer v1.0.4 started"); // Remember to update build.gradle when changing version
+        log.info("Tick Fixer v1.1.0 started"); // Remember to update build.gradle when changing version
 
         if (OSType.getOSType() != OSType.MacOS) {
             log.error("Operating system is not Mac. Terminating.");
@@ -139,11 +147,13 @@ public class TickFixerPlugin extends Plugin {
         throw new IllegalStateException("No valid target address found");
     }
 
-    private boolean ping(String targetAddress) {
+    private boolean ping(String targetAddress, int pingInterval) {
+        log.debug("Attempting to ping {}", targetAddress);
+
         Process process = null;
         try {
             process = new ProcessBuilder("/sbin/ping", "-c", "1", targetAddress).start();
-            return process.waitFor() == 0;
+            return process.waitFor(pingInterval - 10, TimeUnit.MILLISECONDS) && process.exitValue() == 0;
         } catch (IOException | InterruptedException e) {
             log.error(e.getMessage());
             return false;
@@ -158,6 +168,10 @@ public class TickFixerPlugin extends Plugin {
         log.debug("Scheduling ping task");
 
         executor.scheduleAtFixedRate(() -> {
+            if (!isLoggedIn) {
+                return;
+            }
+
             if (Duration.between(lastSuccessfulPing, Instant.now()).compareTo(Duration.ofMinutes(5)) > 0) {
                 log.error("No successful ping in the last 5 minutes. Shutting down");
                 shutDown();
@@ -166,7 +180,8 @@ public class TickFixerPlugin extends Plugin {
 
             // Warning: the compiler does not enforce try-catch here
             try {
-                if (ping(getTargetAddress())) {
+                if (ping(getTargetAddress(), pingInterval)) {
+                    log.debug("Ping succeeded");
                     lastSuccessfulPing = Instant.now();
                 }
             } catch (IllegalStateException e) {
