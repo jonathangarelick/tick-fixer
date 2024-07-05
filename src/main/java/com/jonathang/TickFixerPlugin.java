@@ -3,6 +3,7 @@ package com.jonathang;
 import com.google.inject.Inject;
 import com.google.inject.Provides;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.client.config.ConfigManager;
@@ -40,7 +41,10 @@ public class TickFixerPlugin extends Plugin {
     private String targetAddress;
 
     // Failure management
-    private boolean isLoggedIn = false;
+    @Inject
+    private Client client;
+
+    private boolean isLoggedIn;
     private Instant lastSuccessfulPing;
 
     // Thread management
@@ -83,6 +87,7 @@ public class TickFixerPlugin extends Plugin {
             return;
         }
 
+        isLoggedIn = client.getGameState() == GameState.LOGGED_IN;
         updateConfig();
 
         if (targetAddress != null) {
