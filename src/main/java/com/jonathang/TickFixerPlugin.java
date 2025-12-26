@@ -178,12 +178,6 @@ public class TickFixerPlugin extends Plugin {
                 return;
             }
 
-            if (Duration.between(lastSuccessfulPing, Instant.now()).compareTo(Duration.ofMinutes(5)) > 0) {
-                log.error("No successful ping in the last 5 minutes. Shutting down");
-                shutDown();
-                return;
-            }
-
             // Warning: the compiler does not enforce try-catch here
             try {
                 if (ping(getTargetAddress(), pingInterval)) {
