@@ -175,6 +175,7 @@ public class TickFixerPlugin extends Plugin {
 
         executor.scheduleAtFixedRate(() -> {
             if (!isLoggedIn) {
+                lastSuccessfulPing = Instant.now();
                 return;
             }
 
