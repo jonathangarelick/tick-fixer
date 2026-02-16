@@ -1,199 +1,210 @@
 package com.jonathang;
 
-import com.google.inject.Inject;
 import com.google.inject.Provides;
+import java.net.InetAddress;
+import javax.inject.Inject;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.GameTick;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
-import net.runelite.client.util.OSType;
-import org.apache.commons.validator.routines.InetAddressValidator;
+import net.runelite.client.ui.overlay.OverlayManager;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.net.InetAddress;
-import java.net.UnknownHostException;
-import java.time.Duration;
-import java.time.Instant;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
-
-
-/*
-    Contributions:
-    - Molorius: createExecutor and shutdownExecutor functions
-*/
 @Slf4j
-@PluginDescriptor(name = "Tick Fixer for Mac")
-public class TickFixerPlugin extends Plugin {
-    // Configuration
-    @Inject
-    private TickFixerConfig config;
+@PluginDescriptor(
+	name = "Tick Fixer for Mac",
+	description = "Prevents macOS Wi-Fi power save from degrading tick quality by sending keepalive packets. "
+		+ "Useful for tick manipulation activities like 2t woodcutting, 3t fishing, and prayer flicking.",
+	tags = {"tick", "wifi", "macos", "latency", "jitter", "keepalive", "tick manipulation", "flicker", "flick"},
+	enabledByDefault = false
+)
+public class TickFixerPlugin extends Plugin
+{
+	@Inject
+	private Client client;
 
-    private int pingInterval;
-    private String targetAddress;
+	@Inject
+	private TickFixerConfig config;
 
-    // Failure management
-    @Inject
-    private Client client;
+	@Inject
+	private OverlayManager overlayManager;
 
-    private boolean isLoggedIn;
-    private Instant lastSuccessfulPing;
+	@Inject
+	private TickFixerOverlay overlay;
 
-    // Thread management
-    private ScheduledExecutorService executor;
+	@Getter
+	private TickQualityTracker tickQualityTracker;
 
-    @Provides
-    TickFixerConfig getConfig(ConfigManager configManager) {
-        return configManager.getConfig(TickFixerConfig.class);
-    }
+	@Getter
+	private WifiKeepaliveThread keepaliveThread;
 
-    @Subscribe
-    public void onConfigChanged(ConfigChanged event) {
-        if (event.getGroup().equals(TickFixerConfig.GROUP_NAME)) {
-            updateConfig();
-        }
-    }
+	@Provides
+	TickFixerConfig provideConfig(ConfigManager configManager)
+	{
+		return configManager.getConfig(TickFixerConfig.class);
+	}
 
-    @Subscribe
-    public void onGameStateChanged(GameStateChanged gameStateChanged) {
-        isLoggedIn = gameStateChanged.getGameState() == GameState.LOGGED_IN;
-    }
+	@Override
+	protected void startUp()
+	{
+		boolean isMacOS = System.getProperty("os.name", "").toLowerCase().contains("mac");
 
-    private void updateConfig() {
-        targetAddress = config.ipAddress();
-        pingInterval = config.pingInterval();
-    }
+		if (!isMacOS)
+		{
+			log.info("Tick Fixer: Not running on macOS — keepalive thread disabled. "
+				+ "Tick quality overlay is still active.");
+		}
 
-    private void createExecutor() {
-        if (executor == null || executor.isShutdown()) {
-            executor = Executors.newSingleThreadScheduledExecutor();
-        }
-    }
+		tickQualityTracker = new TickQualityTracker(
+			config.tickSampleSize(),
+			config.tickQualityThresholdMs()
+		);
 
-    @Override
-    protected void startUp() {
-        log.info("Tick Fixer v1.1.1 started"); // Remember to update build.gradle when changing version
+		overlayManager.add(overlay);
 
-        if (OSType.getOSType() != OSType.MacOS) {
-            log.error("Operating system is not Mac. Terminating.");
-            return;
-        }
+		if (isMacOS)
+		{
+			startKeepalive();
+		}
+	}
 
-        isLoggedIn = client.getGameState() == GameState.LOGGED_IN;
-        updateConfig();
+	@Override
+	protected void shutDown()
+	{
+		overlayManager.remove(overlay);
+		stopKeepalive();
+		tickQualityTracker = null;
+	}
 
-        if (targetAddress != null) {
-            log.debug("Found player-configured IP address {} ", targetAddress);
-        }
+	@Subscribe
+	public void onGameTick(GameTick event)
+	{
+		if (tickQualityTracker != null)
+		{
+			tickQualityTracker.recordTick();
+		}
+	}
 
-        createExecutor();
-        lastSuccessfulPing = Instant.now();
-        schedulePingTask();
-    }
+	@Subscribe
+	public void onGameStateChanged(GameStateChanged event)
+	{
+		if (event.getGameState() == GameState.LOGGED_IN && tickQualityTracker != null)
+		{
+			tickQualityTracker.reset();
+		}
 
-    private void shutdownExecutor() {
-        if (executor != null) {
-            executor.shutdown();
-        }
-    }
+		if (keepaliveThread == null)
+		{
+			return;
+		}
 
-    @Override
-    protected void shutDown() {
-        shutdownExecutor();
-        log.info("Tick Fixer stopped");
-    }
+		if (config.onlyWhenLoggedIn())
+		{
+			if (event.getGameState() == GameState.LOGGED_IN)
+			{
+				keepaliveThread.unpause();
+				log.debug("Keepalive resumed — logged in");
+			}
+			else if (event.getGameState() == GameState.LOGIN_SCREEN
+				|| event.getGameState() == GameState.CONNECTION_LOST)
+			{
+				keepaliveThread.pause();
+				log.debug("Keepalive paused — not logged in (state={})", event.getGameState());
+			}
+		}
+	}
 
-    private String getDefaultGatewayAddress() {
-        Process process = null;
-        try {
-            process = new ProcessBuilder("/bin/zsh", "-c", "netstat -nr -f inet | awk '/default/ {print $2}' | head -n1").start();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
-                return reader
-                        .lines()
-                        .findFirst()
-                        .map(output -> {
-                            try {
-                                return InetAddress.getByName(output).getHostAddress();
-                            } catch (UnknownHostException e) {
-                                log.error(e.getMessage());
-                                return null;
-                            }
-                        })
-                        .orElse(null);
-            }
-        } catch (IOException e) {
-            log.error(e.getMessage());
-            return null;
-        } finally {
-            if (process != null) {
-                process.destroyForcibly();
-            }
-        }
-    }
+	@Subscribe
+	public void onConfigChanged(ConfigChanged event)
+	{
+		if (!TickFixerConfig.GROUP_NAME.equals(event.getGroup()))
+		{
+			return;
+		}
 
-    // This uses inlined Apache Commons Validator v1.7
-    private String getTargetAddress() {
-        if (InetAddressValidator.getInstance().isValidInet4Address(targetAddress)) {
-            return targetAddress;
-        }
+		switch (event.getKey())
+		{
+			case "keepaliveIntervalMs":
+				if (keepaliveThread != null)
+				{
+					keepaliveThread.setInterval(config.keepaliveIntervalMs());
+					log.debug("Keepalive interval updated to {}ms", config.keepaliveIntervalMs());
+				}
+				break;
 
-        targetAddress = getDefaultGatewayAddress();
-        if (InetAddressValidator.getInstance().isValidInet4Address(targetAddress)) {
-            return targetAddress;
-        }
+			case "targetHost":
+			case "targetPort":
+				if (keepaliveThread != null)
+				{
+					InetAddress target = WifiKeepaliveThread.resolveTarget(config.targetHost());
+					if (target != null)
+					{
+						keepaliveThread.setTarget(target, config.targetPort());
+						log.debug("Keepalive target updated to {}:{}", target.getHostAddress(), config.targetPort());
+					}
+				}
+				break;
 
-        throw new IllegalStateException("No valid target address found");
-    }
+			case "tickQualityThresholdMs":
+				if (tickQualityTracker != null)
+				{
+					tickQualityTracker.setThresholdMs(config.tickQualityThresholdMs());
+				}
+				break;
 
-    private boolean ping(String targetAddress, int pingInterval) {
-        log.debug("Attempting to ping {}", targetAddress);
+			case "tickSampleSize":
+				// Recreate the tracker with the new sample size
+				if (tickQualityTracker != null)
+				{
+					tickQualityTracker = new TickQualityTracker(
+						config.tickSampleSize(),
+						config.tickQualityThresholdMs()
+					);
+				}
+				break;
+		}
+	}
 
-        Process process = null;
-        try {
-            process = new ProcessBuilder("/sbin/ping", "-c", "1", targetAddress).start();
-            return process.waitFor(pingInterval - 10, TimeUnit.MILLISECONDS) && process.exitValue() == 0;
-        } catch (IOException | InterruptedException e) {
-            log.error(e.getMessage());
-            return false;
-        } finally {
-            if (process != null) {
-                process.destroyForcibly();
-            }
-        }
-    }
+	private void startKeepalive()
+	{
+		if (keepaliveThread != null && keepaliveThread.isRunning())
+		{
+			return;
+		}
 
-    private void schedulePingTask() {
-        log.debug("Scheduling ping task");
+		InetAddress target = WifiKeepaliveThread.resolveTarget(config.targetHost());
+		if (target == null)
+		{
+			log.error("Failed to resolve keepalive target, keepalive will not start");
+			return;
+		}
 
-        executor.scheduleAtFixedRate(() -> {
-            if (!isLoggedIn) {
-                lastSuccessfulPing = Instant.now();
-                return;
-            }
+		keepaliveThread = new WifiKeepaliveThread();
+		keepaliveThread.configure(target, config.targetPort(), config.keepaliveIntervalMs());
 
-            if (Duration.between(lastSuccessfulPing, Instant.now()).compareTo(Duration.ofMinutes(5)) > 0) {
-                log.error("No successful ping in the last 5 minutes. Shutting down");
-                shutDown();
-                return;
-            }
+		// If configured to only run when logged in, start paused
+		if (config.onlyWhenLoggedIn() && client.getGameState() != GameState.LOGGED_IN)
+		{
+			keepaliveThread.pause();
+		}
 
-            // Warning: the compiler does not enforce try-catch here
-            try {
-                if (ping(getTargetAddress(), pingInterval)) {
-                    log.debug("Ping succeeded");
-                    lastSuccessfulPing = Instant.now();
-                }
-            } catch (IllegalStateException e) {
-                log.error(e.getMessage());
-            }
-        }, 0, pingInterval, TimeUnit.MILLISECONDS);
-    }
+		keepaliveThread.start();
+		log.info("Wi-Fi keepalive started: target={}:{}, interval={}ms",
+			target.getHostAddress(), config.targetPort(), config.keepaliveIntervalMs());
+	}
+
+	private void stopKeepalive()
+	{
+		if (keepaliveThread != null)
+		{
+			keepaliveThread.shutdown();
+			keepaliveThread = null;
+		}
+	}
 }
