@@ -21,8 +21,7 @@ import net.runelite.client.ui.overlay.OverlayManager;
 	name = "Tick Fixer for Mac",
 	description = "Prevents macOS Wi-Fi power save from degrading tick quality by sending keepalive packets. "
 		+ "Useful for tick manipulation activities like 2t woodcutting, 3t fishing, and prayer flicking.",
-	tags = {"tick", "wifi", "macos", "latency", "jitter", "keepalive", "tick manipulation", "flicker", "flick"},
-	enabledByDefault = false
+	tags = {"tick", "wifi", "macos", "latency", "jitter", "keepalive", "tick manipulation", "flicker", "flick"}
 )
 public class TickFixerPlugin extends Plugin
 {
