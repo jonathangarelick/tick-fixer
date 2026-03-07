@@ -9,6 +9,7 @@ import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
+import net.runelite.api.ChatMessageType;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
@@ -32,6 +33,9 @@ public class TickFixerPlugin extends Plugin
 	private TickFixerConfig config;
 
 	@Inject
+	private ConfigManager configManager;
+
+	@Inject
 	private OverlayManager overlayManager;
 
 	@Inject
@@ -52,6 +56,8 @@ public class TickFixerPlugin extends Plugin
 	@Override
 	protected void startUp()
 	{
+		migrateConfig();
+
 		boolean isMacOS = System.getProperty("os.name", "").toLowerCase().contains("mac");
 
 		if (!isMacOS)
@@ -147,6 +153,13 @@ public class TickFixerPlugin extends Plugin
 						keepaliveThread.setTarget(target, config.targetPort());
 						log.debug("Keepalive target updated to {}:{}", target.getHostAddress(), config.targetPort());
 					}
+					else
+					{
+						client.addChatMessage(ChatMessageType.GAMEMESSAGE, "",
+							"Tick Fixer: Failed to resolve host '" + config.targetHost() + "'. Keepalive is paused until a valid host is set.",
+							null);
+						keepaliveThread.pause();
+					}
 				}
 				break;
 
@@ -168,6 +181,20 @@ public class TickFixerPlugin extends Plugin
 				}
 				break;
 		}
+	}
+
+	private void migrateConfig()
+	{
+		String oldIpAddress = configManager.getConfiguration(TickFixerConfig.GROUP_NAME, "ipAddress");
+		if (oldIpAddress != null)
+		{
+			log.info("Migrating config key 'ipAddress' -> 'targetHost' (value={})", oldIpAddress);
+			configManager.setConfiguration(TickFixerConfig.GROUP_NAME, "targetHost", oldIpAddress);
+			configManager.unsetConfiguration(TickFixerConfig.GROUP_NAME, "ipAddress");
+		}
+
+		// Clean up old v1 pingInterval key — not migrated since the new default (50ms) is preferred
+		configManager.unsetConfiguration(TickFixerConfig.GROUP_NAME, "pingInterval");
 	}
 
 	private void startKeepalive()

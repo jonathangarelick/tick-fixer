@@ -69,7 +69,11 @@ public class WifiKeepaliveThread
 					}
 				}
 			}
-			process.waitFor();
+			if (!process.waitFor(500, TimeUnit.MILLISECONDS))
+			{
+				process.destroyForcibly();
+				log.warn("route command timed out after 500ms");
+			}
 		}
 		catch (Exception e)
 		{
@@ -215,19 +219,7 @@ public class WifiKeepaliveThread
 
 		if (executor != null)
 		{
-			executor.shutdown();
-			try
-			{
-				if (!executor.awaitTermination(2, TimeUnit.SECONDS))
-				{
-					executor.shutdownNow();
-				}
-			}
-			catch (InterruptedException e)
-			{
-				executor.shutdownNow();
-				Thread.currentThread().interrupt();
-			}
+			executor.shutdownNow();
 			executor = null;
 		}
 
