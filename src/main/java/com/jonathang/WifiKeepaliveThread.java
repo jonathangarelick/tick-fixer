@@ -150,6 +150,41 @@ public class WifiKeepaliveThread
 		this.targetPort.set(port);
 	}
 
+	/**
+	 * Resolve the target address asynchronously on this thread's executor,
+	 * so no blocking occurs on RuneLite's client threads.
+	 */
+	public void resolveAndSetTarget(String configValue, int port, Runnable onSuccess, Runnable onFailure)
+	{
+		if (executor == null || !running.get())
+		{
+			return;
+		}
+
+		executor.submit(() ->
+		{
+			InetAddress resolved = resolveTarget(configValue);
+			if (resolved != null)
+			{
+				targetAddress.set(resolved);
+				targetPort.set(port);
+				log.info("Resolved keepalive target: {}:{}", resolved.getHostAddress(), port);
+				if (onSuccess != null)
+				{
+					onSuccess.run();
+				}
+			}
+			else
+			{
+				log.error("Failed to resolve keepalive target '{}'", configValue);
+				if (onFailure != null)
+				{
+					onFailure.run();
+				}
+			}
+		});
+	}
+
 	public void pause()
 	{
 		paused.set(true);
